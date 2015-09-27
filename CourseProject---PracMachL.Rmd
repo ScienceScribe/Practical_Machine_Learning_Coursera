@@ -1,0 +1,146 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+The goal of this project for the Coursera "Practical Machine Learning" course (https://www.coursera.org/course/predmachlearn) is to predict how well barbell lifts were performed by 6 participants with accelerometers attached to their belt, forearm, and arm, and to the dumbbell (Velloso et al., 2013). There were 5 different classes of activity quality: A = correct; B = elbows were thrown to the front; C = dumbbell was lifted only halfway; D = dumbbell was lowered only halfway; E = hips were thrown to the front.
+
+```{r, message = FALSE, load_libraries_and_data}
+
+library(caret)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+
+#load the "training" data set, which will be split into the training and hold-out (test) data sets
+original_training <- read.csv("pml-training.csv", stringsAsFactors = FALSE)
+
+#load the test cases data set, which will be used to generate predictions to be
+#graded by the course auto-grader.
+original_testing <- read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+```
+
+```{r create_training_and_test_sets}
+
+dim(original_training) 
+
+set.seed(12345)
+trainIndex <- createDataPartition(y = original_training$classe, p = 0.6, list = FALSE)
+train <- original_training[trainIndex,]
+test <- original_training[-trainIndex,]
+```
+
+##Exploration and preprocessing of the training set
+
+```{r explore_and_preprocess_training_set}
+
+#take a look at the variables
+str(train[,1:80])
+str(train[,81:160])
+
+#exclude columns 1 to 7 because they don't seem to be relevant as predictor variables
+#(i.e. they don't contain data from the belt, forearm, arm, or dumbbell accelerometers)
+train_subset <- train[,-(1:7)]
+##note: the "classe" variable (outcome) is now in column 153 of "train_subset" 
+
+#get list of all columns that are not numeric
+not_numeric <- c()
+for (i in names(train_subset[,1:152])) {
+  if (is.numeric(train_subset[,i]) == FALSE) {
+    not_numeric <- c(not_numeric, i)
+  }
+}
+
+length(not_numeric)
+
+##9 of these 33 columns don't look useful at all (i.e. they only have missing or #DIV/0!
+##values); the other columns actually contain numeric values
+
+#exclude all 33 not_numeric columns for now and see whether a good model can be built
+#without them
+train_subset2 <- select(train_subset, -one_of(not_numeric))
+##note: the "classe" variable is now in column 120
+
+#find out which columns have any missing values
+allComplete <- c()
+for (i in names(train_subset2)) {
+  allComplete <- c(allComplete, all(complete.cases(train_subset2[,i])))
+}
+
+df_missing <- data.frame(allComplete)
+df_missing$columnName <- names(train_subset2)
+df_missing <- filter(df_missing, allComplete == FALSE)
+nrow(df_missing)
+
+#exclude all 67 columns containing missing values for now and see whether a good model can
+#be built without them
+train_subset3 <- select(train_subset2, -one_of(df_missing[,2]))
+##note: the "classe" variable is now in column 53
+```
+
+## How the model was built
+
+The model was built using the random forest method.
+
+```{r, message = FALSE, model}
+#create model
+train_subset3$classe <- as.factor(train_subset3$classe)
+modelFit <- train(train_subset3$classe ~., method = "rf", data = train_subset3)
+
+#predict using train_subset3 data set (which was used to train)
+predictions <- predict(modelFit, train_subset3)
+
+#get in sample error
+confusionMatrix(train_subset3$classe, predictions)
+```
+The in sample error is 0 (the accuracy is 1).
+
+## How cross-validation was used
+
+The type of cross-validation that was used for this project was the hold-out method. The out of sample error was obtained by applying the prediction model generated from the train data set to the test data set (i.e. the hold-out data set). 
+
+```{r evaluate_model_on_test_set}
+
+#preprocess test set in the same way that the train set was preprocessed
+test_subset <- test[,-(1:7)]
+test_subset2 <- select(test_subset, -one_of(not_numeric))
+test_subset3 <- select(test_subset2, -one_of(df_missing[,2]))
+
+#predict by applying to the preprocessed test data set the model object generated
+#from the preprocessed train data set 
+test_predictions <- predict(modelFit, test_subset3)
+```
+
+## The expected out of sample error (estimated using cross-validation)
+
+```{r out_of_sample_error}
+
+#get out of sample error
+cMatrix <- confusionMatrix(test_subset3$classe, test_predictions)
+cMatrix
+outOfSampleError <- 1 - cMatrix$overall["Accuracy"]
+outOfSampleError
+```
+
+The out of sample error is `r outOfSampleError`.
+
+## Summary: the reasoning behind the choices made
+
+The data was preprocessed by: 1) removing variables that seem to be irrelevant because they don't contain data generated from the accelerometers on the belt, forearm, arm, or dumbbell; 2) removing variables that are not numeric; 3) removing variables containing missing data. The random forest method was chosen to build the model because it is considered to be very accurate. The model generated from the training set yielded 100% accuracy (0% in sample error). Since it wasn't necessary to improve the model, it was then applied to the hold-out data set (test set). The out of sample error that was obtained was 0.7%, which was very good. The model was then applied to the test cases data set to generate predictions for grading by the course auto-grader. 
+
+##Test cases
+
+```{r test_cases_predictions}
+#preprocess test cases data set in the same way that the training set was preprocessed
+testCase_subset <- original_testing[,-(1:7)]
+testCase_subset2 <- select(testCase_subset, -one_of(not_numeric))
+testCase_subset3 <- select(testCase_subset2, -one_of(df_missing[,2]))
+#note that column 53 in testCase_subset3 is "problem_id", which should be excluded since
+#it is not in the training data set
+testCase_predictions <- predict(modelFit, testCase_subset3[,-53]) 
+testCase_predictions
+```
+
+## Reference
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13). Stuttgart, Germany: ACM SIGCHI, 2013.
